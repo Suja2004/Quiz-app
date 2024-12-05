@@ -1,104 +1,182 @@
-import React, { useState, useEffect } from 'react';
-import { useParams, useHistory } from 'react-router-dom';
-import axios from '../api/axiosConfig';
-import { useAuth } from '../context/AuthContext';
+import React, { useEffect, useState } from "react";
+import api from '../api/axiosConfig';
+import RoomList from "./RoomList";
+import DeleteConfirmation from './DeleteConfirmation';
 
 const QuizRoom = () => {
-  const { user } = useAuth(); // Get user info from context
-  const { roomId } = useParams(); // Get room ID from URL
-  const history = useHistory();
-  const [room, setRoom] = useState(null);
-  const [quizQuestions, setQuizQuestions] = useState([]);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [attemptingQuiz, setAttemptingQuiz] = useState(false);
+  const [isModalVisible, setIsModalVisible] = useState(false);
+  const [error, setError] = useState(null);
+  const [isPopupVisible, setIsPopupVisible] = useState(false);
+  const [popupMessage, setPopupMessage] = useState('');
+  const [questionToDelete, setQuestionToDelete] = useState(null);
+  const [questions, setQuestions] = useState([]);
+  const [selectedRoom, setSelectedRoom] = useState('');
+  const [RoomNumber, setRoomNumber] = useState('');
+  const [form, setForm] = useState({
+    question: "",
+    options: ["", "", "", ""],
+    correctAnswer: "",
+  });
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    // Fetch room details and quiz questions
-    const fetchRoomDetails = async () => {
-      try {
-        const response = await axios.get(`/api/rooms/${roomId}`);
-        setRoom(response.data.room);
-
-        // Check if the logged-in user is the admin or the room creator
-        if (response.data.room.createdBy === user.id || user.role === 'admin') {
-          setIsAdmin(true);
+    if (selectedRoom) {
+      const fetchRoomQuestions = async () => {
+        setLoading(true);
+        try {
+          const token = localStorage.getItem('token');
+          const response = await api.get(`/room/${selectedRoom}/questions`, {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+          });
+          const fetchedQuestions = response.data.questions || [];
+          setQuestions(fetchedQuestions);
+        } catch (err) {
+          console.error("Failed to fetch room data:", err);
+          showPopup("Failed to load room data.");
+        } finally {
+          setLoading(false);
         }
+      };
 
-        // Fetch quiz questions for the room
-        const questionsResponse = await axios.get(`/api/rooms/${roomId}/quiz`);
-        setQuizQuestions(questionsResponse.data.questions);
-      } catch (error) {
-        console.error('Error fetching room details:', error);
-      }
-    };
+      fetchRoomQuestions();
+    }
+  }, [selectedRoom]);
 
-    fetchRoomDetails();
-  }, [roomId, user.id, user.role]);
-
-  const handleQuizAttempt = () => {
-    setAttemptingQuiz(true);
-  };
-
-  const handleDeleteQuestion = async (questionId) => {
+  const handleSubmit = async () => {
     try {
-      await axios.delete(`/api/rooms/${roomId}/quiz/${questionId}`);
-      setQuizQuestions(quizQuestions.filter((q) => q._id !== questionId)); // Update state to remove the deleted question
-    } catch (error) {
-      console.error('Error deleting question:', error);
+      const token = localStorage.getItem('token');
+      const response = await api.post(`/room/${selectedRoom}/question`, { ...form }, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const newQuestion = response.data.question;
+      setQuestions((prevQuestions) => [...prevQuestions, newQuestion]);
+      showPopup("Question added successfully");
+      setForm({
+        question: "",
+        options: ["", "", "", ""],
+        correctAnswer: "",
+      });
+    } catch (err) {
+      showPopup(err.response?.data?.error || "Failed to add question");
     }
   };
 
-  const handleDeleteRoom = async () => {
+  const handleDelete = async () => {
+    if (!questionToDelete) return;
+    const token = localStorage.getItem('token');
+
     try {
-      await axios.delete(`/api/rooms/${roomId}`);
-      history.push('/'); // Redirect to home after room deletion
-    } catch (error) {
-      console.error('Error deleting room:', error);
+      await api.delete(`/question/${questionToDelete}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      setQuestions(questions.filter((q) => q._id !== questionToDelete));
+      showPopup("Question Deleted Successfully");
+    } catch (err) {
+      console.error("Error deleting question:", err);
+      showPopup("Error deleting question. Please try again later.");
+    } finally {
+      setIsModalVisible(false);
     }
   };
 
-  const renderQuizQuestions = () => {
-    return quizQuestions.map((question) => (
-      <div key={question._id} className="quiz-question">
-        <p>{question.questionText}</p>
-        {isAdmin && (
-          <button onClick={() => handleDeleteQuestion(question._id)}>Delete Question</button>
-        )}
-      </div>
-    ));
+  const showPopup = (message) => {
+    setPopupMessage(message);
+    setIsPopupVisible(true);
+    setTimeout(() => setIsPopupVisible(false), 3000);
   };
+  const handleSelectRoom = (roomId, roomNumber) => {
+    setSelectedRoom(roomId);
+    setRoomNumber(roomNumber);
+  };
+
+  if (!selectedRoom) {
+    return <RoomList onSelectRoom={handleSelectRoom} />;
+  }
+
+  if (loading) return <p>Loading...</p>;
 
   return (
-    <div className="quiz-room">
-      {room ? (
-        <div>
-          <h2>Quiz Room: {room.roomNumber}</h2>
-          <p>Created by: {room.createdBy}</p>
-          <p>Room Description: {room.description}</p>
-
-          <div className="quiz-actions">
-            {isAdmin && (
-              <div>
-                <button onClick={handleDeleteRoom}>Delete Room</button>
-                {/* Admin can add new questions (for simplicity, not implemented here) */}
-              </div>
-            )}
-
-            {!attemptingQuiz && (
-              <button onClick={handleQuizAttempt}>Start Quiz</button>
-            )}
-
-            {attemptingQuiz && (
-              <div>
-                <h3>Quiz Questions:</h3>
-                {renderQuizQuestions()}
-              </div>
-            )}
-          </div>
+    <div className="room">
+      <>
+        <div className="add-question-container">
+          <h3>Add a Question to Room : <ins>{RoomNumber}</ins></h3>
+          <input
+            className="add-question-input"
+            type="text"
+            placeholder="Question"
+            value={form.question}
+            onChange={(e) => setForm({ ...form, question: e.target.value })}
+            required
+          />
+          {form.options.map((option, index) => (
+            <input
+              key={index}
+              className="add-question-option"
+              type="text"
+              placeholder={`Option ${index + 1}`}
+              value={option}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  options: form.options.map((opt, i) =>
+                    i === index ? e.target.value : opt
+                  ),
+                })
+              }
+            />
+          ))}
+          <input
+            className="add-question-input correct"
+            type="text"
+            placeholder="Correct Answer"
+            value={form.correctAnswer}
+            onChange={(e) => setForm({ ...form, correctAnswer: e.target.value })}
+          />
+          <button className="add-question-button" onClick={handleSubmit}>
+            Add Question
+          </button>
         </div>
-      ) : (
-        <p>Loading room details...</p>
-      )}
+        <div className="question-list">
+          {Array.isArray(questions) && questions.length > 0 ? (
+            questions.map((question) => (
+              <div className="questions" key={question._id}>
+                <p><strong>Question:</strong> {question.question}</p>
+                <ul>
+                  {question.options.map((option, index) => (
+                    <li key={index}>{option}</li>
+                  ))}
+                </ul>
+                <p><strong>Correct Answer:</strong> {question.correctAnswer}</p>
+                <button
+                  className="del-btn"
+                  onClick={() => {
+                    setIsModalVisible(true);
+                    setQuestionToDelete(question._id);
+                  }}
+                >
+                  Delete
+                </button>
+              </div>
+            ))
+          ) : (
+            <p>No questions available.</p>
+          )}
+        </div>
+        {isPopupVisible && <div className="popup">{popupMessage}</div>}
+      </>
+      <DeleteConfirmation
+        isVisible={isModalVisible}
+        onClose={() => setIsModalVisible(false)}
+        onConfirm={handleDelete}
+        msg="question"
+      />
     </div>
   );
 };

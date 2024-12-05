@@ -25,8 +25,8 @@ mongoose.connect(mongoURI, {
 
 const userSchema = new mongoose.Schema({
     username: { type: String, required: true, unique: true },
-    password: { type: String, required: true },
     email: { type: String, unique: true, sparse: true, default: null },
+    password: { type: String, required: true },
 });
 
 const User = mongoose.model('User', userSchema);
@@ -34,17 +34,28 @@ const User = mongoose.model('User', userSchema);
 const roomSchema = new mongoose.Schema({
     roomNumber: { type: String, unique: true, required: true },
     creator: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    questions: [
-        {
-            no: { type: Number, required: true },
-            question: String,
-            options: [String],
-            correctAnswer: String,
-        },
-    ],
 });
 
 const Room = mongoose.model('Room', roomSchema);
+
+const questionSchema = new mongoose.Schema({
+    roomId: { type: mongoose.Schema.Types.ObjectId, ref: 'Room', required: true },
+    question: { type: String, required: true },
+    options: { type: [String], required: true },
+    correctAnswer: { type: String, required: true },
+});
+
+const Question = mongoose.model('Question', questionSchema);
+
+const resultSchema = new mongoose.Schema({
+    userName: { type: String, required: true },
+    roomNumber: { type: mongoose.Schema.Types.ObjectId, ref: 'Room', required: true },
+    score: { type: Number, required: true },
+    totalQuestions: { type: Number, required: true },
+    date: { type: Date, default: Date.now },
+});
+
+const Result = mongoose.model("Result", resultSchema);
 
 const authenticateJWT = (req, res, next) => {
     const token = req.header('Authorization')?.split(' ')[1];
@@ -104,7 +115,6 @@ app.post('/api/register', async (req, res) => {
 });
 
 
-
 app.post('/api/login', async (req, res) => {
     const { usernameOrEmail, password } = req.body;
 
@@ -117,8 +127,11 @@ app.post('/api/login', async (req, res) => {
             return res.status(401).json({ message: 'Invalid credentials' });
         }
 
-        const token = jwt.sign({ userId: user._id }, JWT_SECRET, { expiresIn: '10h' });
-        const expiry = Date.now() + 36000000;
+        const token = jwt.sign(
+            { userId: user._id, exp: Math.floor(Date.now() / 1000) + (10 * 60 * 60) },
+            JWT_SECRET
+        );
+        const expiry = Math.floor(Date.now() / 1000) + (10 * 60 * 60);
 
         res.json({ token, userId: user._id, expiry });
     } catch (error) {
@@ -132,89 +145,114 @@ app.post('/api/logout', (req, res) => {
 
 app.get('/api/rooms', async (req, res) => {
     try {
-        const rooms = await Room.find({}).select('-questions.correctAnswer');
+        const rooms = await Room.find({});
         res.json(rooms);
     } catch (error) {
         res.status(500).json({ message: 'Error fetching rooms', error: error.message });
     }
 });
 
-app.post('/api/room', authenticateJWT, async (req, res) => {
-    const { roomNumber } = req.body;
-
-    if (!roomNumber) {
-        return res.status(400).json({ message: 'Room number is required.' });
-    }
-
-    if (!req.user || !req.user.id) {
-        return res.status(403).json({ message: 'User ID is missing in token.' });
-    }
-
+app.get('/api/room/:roomId/questions', authenticateJWT, async (req, res) => {
     try {
+        const { roomId } = req.params;
+
+        const room = await Room.findById(roomId);
+        if (!room) {
+            return res.status(404).json({ message: 'Room not found' });
+        }
+
+        const questions = await Question.find({ roomId });
+
+        res.status(200).json({ room, questions });
+    } catch (error) {
+        console.error('Error fetching questions:', error.message);
+        res.status(500).json({ message: 'Error fetching questions', error: error.message });
+    }
+});
+
+app.get("/api/results", async (req, res) => {
+    try {
+        const results = await Result.find();
+        res.status(200).json(results);
+    } catch (err) {
+        res.status(500).json({ error: "Error fetching results" });
+    }
+});
+
+app.get("/api/leaderboard", async (req, res) => {
+    try {
+        const leaderboard = await Result.find()
+            .sort({ score: -1 })
+            .limit(10);
+        res.status(200).json(leaderboard);
+    } catch (err) {
+        res.status(500).json({ error: "Error fetching leaderboard" });
+    }
+});
+
+app.post('/api/room', authenticateJWT, async (req, res) => {
+    try {
+        const { roomNumber } = req.body;
+
+        if (!roomNumber) {
+            return res.status(400).json({ message: 'Room code is required.' });
+        }
+
+        const existingRoom = await Room.findOne({ roomNumber });
+        if (existingRoom) {
+            return res.status(409).json({ message: 'Room with this code already exists.' });
+        }
+
         const room = new Room({ roomNumber, creator: req.user.id });
         await room.save();
+
         res.status(201).json({ message: 'Room created successfully.', room });
     } catch (error) {
-        console.error('Error creating room:', error);
+        console.error('Error creating room:', error.message);
         res.status(500).json({ message: 'Error creating room.', error: error.message });
     }
 });
 
-app.post('/api/room/questions/:id', authenticateJWT, async (req, res) => {
-    const { questions } = req.body;
-
-    if (!questions || !Array.isArray(questions)) {
-        return res.status(400).json({ message: 'Questions must be an array.' });
-    }
-
+app.post('/api/room/:roomId/question', authenticateJWT, async (req, res) => {
     try {
-        const room = await Room.findById(req.params.id);
+        const { roomId } = req.params;
+        const { question, options, correctAnswer } = req.body;
 
-        if (!room) {
-            return res.status(404).json({ message: 'Room not found.' });
+        if (
+            !question ||
+            !Array.isArray(options) ||
+            options.length !== 4 ||
+            options.some(option => !option.trim()) ||
+            !correctAnswer
+        ) {
+            return res.status(400).json({ error: "All fields are required and must be valid." });
         }
 
-        for (const newQuestion of questions) {
-            if (room.questions.some(q => q.no === newQuestion.no)) {
-                return res.status(400).json({
-                    message: `Question number ${newQuestion.no} already exists in the room.`,
-                });
-            }
-        }
-
-        room.questions.push(...questions);
-        await room.save();
-
-        res.status(200).json({ message: 'Questions added successfully.', room });
-    } catch (error) {
-        console.error('Error adding questions:', error);
-        res.status(500).json({ message: 'Error adding questions.', error: error.message });
-    }
-});
-
-
-app.put('/api/room/question/:id', authenticateJWT, async (req, res) => {
-    const { qno, question, options, correctAnswer } = req.body;
-    try {
-        const room = await Room.findById(req.params.id);
+        const room = await Room.findById(roomId);
         if (!room) {
             return res.status(404).json({ message: 'Room not found' });
         }
-        const questionIndex = room.questions.findIndex(q => q.no === qno);
-        if (questionIndex === -1) {
-            return res.status(404).json({ message: 'Question not found' });
-        }
-        if (question) room.questions[questionIndex].question = question;
-        if (options) room.questions[questionIndex].options = options;
-        if (correctAnswer) room.questions[questionIndex].correctAnswer = correctAnswer;
-        await room.save();
-        res.status(200).json({ message: 'Question updated successfully', room });
+
+        const newQuestion = new Question({ roomId, question, options, correctAnswer });
+        await newQuestion.save();
+
+        res.status(201).json({ message: 'Question added successfully', question: newQuestion });
     } catch (error) {
-        console.error('Error updating question:', error);
-        res.status(500).json({ message: 'Error updating question', error: error.message });
+        console.error('Error adding question:', error.message);
+        res.status(500).json({ message: 'Error adding question', error: error.message });
     }
 });
 
+app.post("/api/results", async (req, res) => {
+    try {
+        const { userName, roomNumber, score, totalQuestions } = req.body;
+        const newResult = new Result({ userName, roomNumber, score, totalQuestions });
+        await newResult.save();
+        res.status(201).json({ message: "Result saved successfully" });
+    } catch (err) {
+        res.status(500).json({ error: "Error saving result" });
+    }
+});
 
 app.delete('/api/room/:id', authenticateJWT, async (req, res) => {
     try {
@@ -227,40 +265,34 @@ app.delete('/api/room/:id', authenticateJWT, async (req, res) => {
         if (room.creator.toString() !== req.user.id) {
             return res.status(403).json({ message: 'You are not authorized to delete this room' });
         }
+        await
+            Question.deleteMany({ roomId: req.params.id });
 
         await Room.findByIdAndDelete(req.params.id);
-        res.json({ message: 'Room deleted successfully' });
+
+        res.json({ message: 'Room and its questions deleted successfully' });
     } catch (error) {
         res.status(500).json({ message: 'Error deleting room', error: error.message });
     }
 });
 
-app.delete('/api/room/question/:id', authenticateJWT, async (req, res) => {
-    const { qno } = req.body;
-    try {
-        const room = await Room.findById(req.params.id);
+app.delete('/api/question/:questionId', authenticateJWT, async (req, res) => {
 
-        if (!room) {
-            return res.status(404).json({ message: 'Room not found' });
+    try {
+        const { questionId } = req.params;
+
+        const deletedQuestion = await Question.findByIdAndDelete(questionId);
+
+        if (!deletedQuestion) {
+            return res.status(404).json({ message: 'Question not found' });
         }
 
-        const updatedQuestions = room.questions.filter(q => q.no !== qno);
-
-        updatedQuestions.forEach((question, index) => {
-            question.no = index + 1;
-        });
-
-        room.questions = updatedQuestions;
-
-        await room.save();
-
-        res.status(200).json({ message: 'Question removed and numbering updated successfully', room });
+        res.status(200).json({ message: 'Question deleted successfully' });
     } catch (error) {
-        console.error('Error deleting and updating question:', error);
-        res.status(500).json({ message: 'Error deleting and updating question', error: error.message });
+        console.error('Error deleting question:', error.message);
+        res.status(500).json({ message: 'Error deleting question', error: error.message });
     }
 });
-
 
 app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);

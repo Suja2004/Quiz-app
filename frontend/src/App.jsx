@@ -1,19 +1,19 @@
-import React, { useContext } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
-import UserPage from './pages/UserPage';
+import { Routes, Route } from 'react-router-dom';
+import Register from './Auth/Register';
+import Login from './Auth/Login';
+import RoomList from './components/RoomList';
+import QuizRoom from './components/QuizRoom';
 
 const App = () => {
 
   return (
-    <Router>
+    <>
       <Routes>
-        <Route path="/" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
-        <Route path="/user" element={<UserPage />} />
+        <Route path="/register" element={<Register />} />
+        <Route path="/" element={<Login />} />
+        <Route path="/home" element={<QuizRoom />} />
       </Routes>
-    </Router>
+    </>
   );
 };
 

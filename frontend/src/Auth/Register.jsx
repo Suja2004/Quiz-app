@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from '../api/axiosConfig';
 import { useNavigate } from 'react-router-dom';
 
 const Register = () => {
@@ -36,13 +36,13 @@ const Register = () => {
 
         try {
             setError('');
-            await axios.post('http://localhost:5000/api/register', { username, password, email });
+            await api.post('/register', { username, password, email });
             alert('Registration successful! You can now log in.');
-            navigate('/login');
+            navigate('/');
         } catch (error) {
-            console.error('Error registering:'); // Log error for debugging
+            console.error('Error registering:');
             if (error.response && error.response.data) {
-                setError(error.response.data.message); // Display specific error message
+                setError(error.response.data.message);
             } else {
                 setError('Registration failed. Please try again.');
             }
@@ -82,7 +82,7 @@ const Register = () => {
                 <button type="submit">Register</button>
                 {error && <p className='error-message'>{error}</p>}
                 <p>
-                    Already have an account? <span className="link" onClick={() => navigate('/login')}>Login here</span>
+                    Already have an account? <span className="link" onClick={() => navigate('/')}>Login here</span>
                 </p>
             </form>
         </div>
