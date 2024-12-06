@@ -34,6 +34,7 @@ const User = mongoose.model('User', userSchema);
 const roomSchema = new mongoose.Schema({
     roomNumber: { type: String, unique: true, required: true },
     creator: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    timeLimit: { type: Number, required: false, default: 0 },
 });
 
 const Room = mongoose.model('Room', roomSchema);
@@ -202,8 +203,7 @@ app.post('/api/room', authenticateJWT, async (req, res) => {
         if (existingRoom) {
             return res.status(409).json({ message: 'Room with this code already exists.' });
         }
-
-        const room = new Room({ roomNumber, creator: req.user.id });
+        const room = new Room({ roomNumber, creator: req.user.id, timeLimit: req.body.timeLimit });
         await room.save();
 
         res.status(201).json({ message: 'Room created successfully.', room });
